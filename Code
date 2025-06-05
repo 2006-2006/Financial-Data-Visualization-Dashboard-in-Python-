@@ -1,0 +1,319 @@
+%pip install matplotlib
+%pip install dash dash-bootstrap-components yfinance plotly wordcloud transformers spacy nltk
+
+# Ultra-Advanced Financial Data Visualization Dashboard in Python (Power BI Style)
+
+import yfinance as yf
+import pandas as pd
+import nltk
+import spacy
+from transformers import pipeline
+import plotly.graph_objs as go
+from dash import Dash, dcc, html, Input, Output
+import dash_bootstrap_components as dbc
+from wordcloud import WordCloud
+import base64
+from io import BytesIO
+import matplotlib.pyplot as plt # Import matplotlib
+
+# 📥 Setup NLTK and SpaCy
+# Only download if not already downloaded
+try:
+    nltk.data.find('corpora/vader_lexicon')
+except LookupError:
+    nltk.download('vader_lexicon')
+
+try:
+    spacy.load("en_core_web_sm")
+except OSError:
+    spacy.cli.download("en_core_web_sm")
+    nlp_spacy = spacy.load("en_core_web_sm")
+else:
+    nlp_spacy = spacy.load("en_core_web_sm")
+
+
+sentiment_transformer = pipeline("sentiment-analysis")
+
+# 📊 Fetch stock data
+def fetch_data(symbol, period="3mo"):
+    return yf.download(symbol, period=period)
+
+# 🧠 Analyze sentiment
+def analyze_sentiment(texts):
+    results = []
+    all_words = []
+    for text in texts:
+        doc = nlp_spacy(text)
+        sentiment = sentiment_transformer(text)[0]
+        all_words.extend([token.text for token in doc if token.is_alpha])
+        results.append({
+            "text": text,
+            "entities": [(ent.text, ent.label_) for ent in doc.ents],
+            "sentiment": sentiment
+        })
+    return results, all_words
+
+# 📈 Price Chart
+def create_price_chart(data):
+    layout = go.Layout(
+        title='📈 Closing Price Over Time',
+        xaxis=dict(title='Date'),
+        yaxis=dict(title='Price (USD)'),
+        hovermode='x unified',
+        template='plotly_dark',
+        height=400
+    )
+    return {
+        'data': [
+            go.Scatter(
+                x=data.index, y=data['Close'],
+                mode='lines+markers',
+                name='Close Price',
+                line=dict(color='green')
+            )
+        ],
+        'layout': layout.to_plotly_json()
+    }
+
+# 📊 Volume Chart
+def create_volume_chart(data):
+    layout = go.Layout(
+        title='⏱ Trading Volume Over Time',
+        xaxis=dict(title='Date'),
+        yaxis=dict(title='Volume'),
+        template='plotly_dark',
+        height=300
+    )
+    return {
+        'data': [
+            go.Bar(
+                x=data.index, y=data['Volume'],
+                name='Volume', marker_color='orange'
+            )
+        ],
+        'layout': layout.to_plotly_json()
+    }
+
+# 📊 Moving Average Chart
+def create_moving_average_chart(data, short_window=20, long_window=50):
+    data[f'{short_window} Day MA'] = data['Close'].rolling(window=short_window).mean() # Apply rolling to the 'Close' column
+    data[f'{long_window} Day MA'] = data['Close'].rolling(window=long_window).mean() # Apply rolling to the 'Close' column
+
+    layout = go.Layout(
+        title='📈 Closing Price with Moving Averages',
+        xaxis=dict(title='Date'),
+        yaxis=dict(title='Price (USD)'),
+        hovermode='x unified',
+        template='plotly_dark',
+        height=400
+    )
+    return {
+        'data': [
+            go.Scatter(
+                x=data.index, y=data['Close'],
+                mode='lines',
+                name='Close Price',
+                line=dict(color='green')
+            ),
+            go.Scatter(
+                x=data.index, y=data[f'{short_window} Day MA'],
+                mode='lines',
+                name=f'{short_window} Day MA',
+                line=dict(color='red', dash='dash')
+            ),
+            go.Scatter(
+                x=data.index, y=data[f'{long_window} Day MA'],
+                mode='lines',
+                name=f'{long_window} Day MA',
+                line=dict(color='blue', dash='dot')
+            )
+        ],
+        'layout': layout.to_plotly_json()
+    }
+
+# 📊 Candlestick Chart
+def create_candlestick_chart(data):
+    layout = go.Layout(
+        title='🕯️ Candlestick Chart',
+        xaxis=dict(title='Date'),
+        yaxis=dict(title='Price (USD)'),
+        hovermode='x unified',
+        template='plotly_dark',
+        height=400
+    )
+    return {
+        'data': [
+            go.Candlestick(
+                x=data.index,
+                open=data['Open'],
+                high=data['High'],
+                low=data['Low'],
+                close=data['Close'],
+                name='Candlestick'
+            )
+        ],
+        'layout': layout.to_plotly_json()
+    }
+
+# ☁️ Word Cloud
+def generate_wordcloud(words):
+    wordcloud = WordCloud(width=600, height=300, background_color='white').generate(' '.join(words))
+    img = BytesIO()
+    wordcloud.to_image().save(img, format='PNG')
+    img.seek(0)
+    encoded = base64.b64encode(img.read()).decode()
+    return f"data:image/png;base64,{encoded}"
+
+# 🚀 Dash App
+app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
+
+app.layout = dbc.Container([
+    html.H2("📈 Advanced Financial Dashboard", className="text-center text-primary my-4"),
+
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H5("Stock Ticker Input", className="card-title"),
+                    dcc.Input(id='ticker-input', value='AAPL', type='text', className='form-control mb-2', debounce=True),
+                    html.Div("Enter stock symbol (e.g., AAPL, TSLA, MSFT)", className="text-muted")
+                ])
+            ])
+        ], width=12, lg=4, className="mb-4"),
+    ], className='mb-3 justify-content-center'), # Center the input card
+
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("📈 Closing Price Over Time"),
+                dbc.CardBody([
+                    dcc.Graph(id='price-chart')
+                ])
+            ])
+        ], width=12, lg=6, className="mb-4"), # Adjust column width for better layout
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("⏱ Trading Volume Over Time"),
+                dbc.CardBody([
+                    dcc.Graph(id='volume-chart')
+                ])
+            ])
+        ], width=12, lg=6, className="mb-4"), # Adjust column width for better layout
+    ]),
+
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("📈 Closing Price with Moving Averages"),
+                dbc.CardBody([
+                    dcc.Graph(id='moving-average-chart')
+                ])
+            ])
+        ], width=12, lg=6, className="mb-4"),
+         dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("🕯️ Candlestick Chart"),
+                dbc.CardBody([
+                    dcc.Graph(id='candlestick-chart')
+                ])
+            ])
+        ], width=12, lg=6, className="mb-4"),
+    ]),
+
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("📰 News Sentiment Analysis"),
+                dbc.CardBody([
+                    html.Div(id='sentiment-output')
+                ])
+            ])
+        ], width=12, lg=6, className="mb-4"),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("☁️ Word Cloud of News Headlines"),
+                dbc.CardBody([
+                    html.Img(id='wordcloud-img', style={'width': '100%', 'height': 'auto'})
+                ])
+            ])
+        ], width=12, lg=6, className="mb-4")
+    ]),
+
+    # Add a simple footer for better visual completeness
+    dbc.Row([
+        dbc.Col(html.P("Financial Dashboard | Powered by Dash & Bootstrap", className="text-center text-muted my-4"))
+    ])
+
+], fluid=True, className="p-3") # Add some padding around the container
+
+# ⏱ Update on Ticker Input
+@app.callback(
+    Output('price-chart', 'figure'),
+    Output('volume-chart', 'figure'),
+    Output('moving-average-chart', 'figure'),
+    Output('candlestick-chart', 'figure'),
+    Output('sentiment-output', 'children'),
+    Output('wordcloud-img', 'src'),
+    Input('ticker-input', 'value')
+)
+def update_dashboard(ticker):
+    df = fetch_data(ticker)
+
+    # Check if the dataframe is empty or None
+    if df is None or df.empty:
+        return (
+            go.Figure().update_layout(title=f"No data found for {ticker}"),
+            go.Figure().update_layout(title=f"No data found for {ticker}"),
+            go.Figure().update_layout(title=f"No data found for {ticker}"),
+            go.Figure().update_layout(title=f"No data found for {ticker}"),
+            html.Div(f"Could not fetch data for {ticker}. Please check the ticker symbol."),
+            "" # Return empty string for wordcloud image source
+        )
+
+    price_fig = create_price_chart(df)
+    volume_fig = create_volume_chart(df)
+    moving_average_fig = create_moving_average_chart(df.copy()) # Use a copy to avoid modifying the original df
+    candlestick_fig = create_candlestick_chart(df.copy()) # Use a copy to avoid modifying the original df
+
+
+    # Placeholder headlines - replace with actual news fetching in a real app
+    headlines = [
+        f"{ticker} hits all-time high after earnings report",
+        f"{ticker} faces new competition from AI startups",
+        f"{ticker} expands into new international markets",
+        f"Analysts upgrade {ticker} stock rating",
+        f"{ticker} announces new product launch"
+    ]
+
+    sentiment_results, word_list = analyze_sentiment(headlines)
+    wordcloud_src = generate_wordcloud(word_list)
+
+    sentiment_cards = []
+    for result in sentiment_results:
+        sentiment = result['sentiment']['label']
+        score = result['sentiment']['score']
+        # Use different badge colors based on sentiment
+        if sentiment == 'POSITIVE':
+            sentiment_badge = dbc.Badge("Positive", color="success", className="me-1")
+        elif sentiment == 'NEGATIVE':
+            sentiment_badge = dbc.Badge("Negative", color="danger", className="me-1")
+        else:
+            sentiment_badge = dbc.Badge("Neutral", color="secondary", className="me-1")
+
+        sentiment_cards.append(
+            dbc.Card([
+                dbc.CardHeader(result['text']),
+                dbc.CardBody([
+                    html.P([
+                        "Sentiment: ",
+                        sentiment_badge,
+                        f"Score: {score:.2f}"
+                    ]),
+                    html.P("Entities: " + ", ".join([f"{e[0]} ({e[1]})" for e in result['entities']]))
+                ])
+            ], className="mb-3")
+        )
+
+    return price_fig, volume_fig, moving_average_fig, candlestick_fig, sentiment_cards, wordcloud_src
+
+app.run(debug=True, jupyter_mode='inline')
